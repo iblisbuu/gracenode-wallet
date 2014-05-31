@@ -27,7 +27,7 @@ gracenode.setup(function (error) {
 	if (error) {
 		return console.error(error);
 	}
-	gracenode.getModuleSchema('wallet', function (error, sqlList) {
+	gracenode.getModuleSchema('gracenode-wallet', function (error, sqlList) {
 		if (error) {
 			// hmm error
 		}
@@ -68,8 +68,10 @@ gracenode.wallet
 Configurations
 ```javascript
 "modules": {
-        "names": [an array of wallet names],
-        "sql": "mysql configuration name"
+	"gracenode-wallet": {
+        	"names": [an array of wallet names],
+        	"sql": "mysql configuration name"
+	}
 }
 ```
 
