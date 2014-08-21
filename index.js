@@ -183,12 +183,6 @@ function walletAdd(wallet, mysql, receiptHashId, userId, price, pays, callback) 
 	});
 }
 
-function WalletBatch(wallet, mysql, cb) {
-	this.wallet = wallet;
-	this.mysql = mysql;
-	this.cb = cb;
-}
-
 /**
  * Batches several add/spend in a single transaction, eg.
  *
@@ -210,6 +204,12 @@ Wallet.prototype.batch = function(workCb, cb) {
 		workCb(batchManager, callback);
 	}, done);
 };
+
+function WalletBatch(wallet, mysql, cb) {
+	this.wallet = wallet;
+	this.mysql = mysql;
+	this.cb = cb;
+}
 
 // map existing functions from the wallet
 WalletBatch.prototype.addFree = function (receiptHashId, userId, value, cb) {

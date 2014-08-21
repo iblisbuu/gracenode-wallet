@@ -232,13 +232,18 @@ Exemple:
 ```javascript
 var hc = gracenode.wallet.create('hc');
 
-hc.batch(function(batch, callback) {
-	async.series([
-		batch.addPaid.bind(batch, "receipt", "userId", 200, 10),
-		batch.spend.bind(batch, "usedId", 15, "something"),
-		doSomeOtherMySQLCalls.bind(null, "something")
-	], callback);
-}, function(error) {
-	// do things with error, at this point the transaction is closed
-});
+// allow users to trade items using HC
+function trade(item, user1, user2, cb) {
+	var tradeId = "trade/" + uuid.v4();
+
+	hc.batch(function(batch, callback) {
+		async.series([
+			batch.spend.bind(batch, user1.id(), item.value, tradeId),
+			batch.addFree.bind(batch, tradeId, user2.id(), item.value),
+			// the user can access the mysql object through batch.mysql
+			addItem.bind(batch, user1, item),
+			delItem.bind(batch, user2, item)
+		], callback);
+	}, cb);
+}
 ```
