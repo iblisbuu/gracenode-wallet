@@ -51,151 +51,195 @@ Wallet.prototype.addFree = function (receiptHashId, userId, value, onCallback, c
 };
 
 Wallet.prototype.spend = function (userId, valueToSpend, spendFor, onCallback, cb) {
-
-	if (typeof valueToSpend !== 'number' || valueToSpend <= 0) {
-		return cb(new Error('invalid value to spend given:' + valueToSpend + ':' + (typeof valueToSpend)));
-	}
-	
 	var that = this;
-	
+
+	// silencer prevents a callback from receiving more than 1 arg
+	var done = silencer(cb);
+
 	mysqlDb.transaction(function (mysql, callback) {
-		
-		getBalanceByUserId(that, mysql, userId, function (error, balance) {
+		walletSpend(that, mysql, userId, valueToSpend, spendFor, function(err) {
+			if (err) {
+				return callback(err);
+			}
+			if (typeof onCallback === 'function') {
+				return onCallback(callback);
+			}
+			callback();
+		});
+	}, done);
+};
+
+function walletSpend(wallet, mysql, userId, valueToSpend, spendFor, callback) {
+	if (typeof valueToSpend !== 'number' || valueToSpend <= 0) {
+		return callback(new Error('invalid value to spend given:' + valueToSpend + ':' + (typeof valueToSpend)));
+	}
+
+	getBalanceByUserId(wallet, mysql, userId, function (error, balance) {
+		if (error) {
+			return callback(error);
+		}
+
+		var total = balance.paid + balance.free;
+
+		log.info('trying to spend ' + valueToSpend + ' out of ' + total + ' user: ' + userId);
+
+		// check if the user has enough value to spend
+		if (total < valueToSpend) {
+			return callback(new Error('not enough balance: user(' + userId + ')'));
+		}
+
+		var spendValues = calcSpendValues(valueToSpend, balance.paid, balance.free);
+
+		spendFromBalance(mysql, userId, wallet._name, spendValues.paidBalance, spendValues.freeBalance, function (error) {
 			if (error) {
 				return callback(error);
 			}
 
-			var total = balance.paid + balance.free;
-
-			log.info('trying to spend ' + valueToSpend + ' out of ' + total + ' user: ' + userId);
-	
-			// check if the user has enough value to spend
-			if (total < valueToSpend) {
-				return callback(new Error('not enough balance: user(' + userId + ')'));
-			}
-
-			var spendValues = calcSpendValues(valueToSpend, balance.paid, balance.free);
-
-			spendFromBalance(mysql, userId, that._name, spendValues.paidBalance, spendValues.freeBalance, function (error) {
+			updateBalanceHistoryOut(mysql, userId, wallet._name, spendValues.toSpendPaid, spendValues.toSpendFree, spendFor, function (error) {
 				if (error) {
 					return callback(error);
 				}
 
-				updateBalanceHistoryOut(mysql, userId, that._name, spendValues.toSpendPaid, spendValues.toSpendFree, spendFor, function (error) {
-					if (error) {
-						return callback(error);
-					}
+				log.info('spent: ' + valueToSpend + ' out of ' + total + ' user: ' + userId);
+				log.info('spent detail: (paid:' + spendValues.toSpendPaid + ') (free:' + spendValues.toSpendFree + ')');
 
-					if (typeof onCallback === 'function') {
-						return onCallback(function (error) {
-							if (error) {
-								log.error(error);
-								return callback(error);
-							}
-							
-							log.info('spent: ' + valueToSpend + ' out of ' + total + ' user: ' + userId);
-							log.info('spent detail: (paid:' + spendValues.toSpendPaid + ') (free:' + spendValues.toSpendFree + ')');						
-	
-							callback(null);
-						});
-					}
+				callback();
 
-					log.info('spent: ' + valueToSpend + ' out of ' + total + ' user: ' + userId);
-					log.info('spent detail: (paid:' + spendValues.toSpendPaid + ') (free:' + spendValues.toSpendFree + ')');						
-
-					callback();
-
-				});
-		
 			});
 
 		});
 
-	}, 
-	function (error) {
-		if (error) {
-			return cb(error);
-		}
-
-		cb();
 	});
-
-};
+}
 
 Wallet.prototype.add = function (receiptHashId, userId, price, pays, onCallback, cb) {
+	var that = this;
+
+	// silencer prevents a callback from receiving more than 1 arg
+	var done = silencer(cb);
+
+	mysqlDb.transaction(function (mysql, callback) {
+		walletAdd(that, mysql, receiptHashId, userId, price, pays, function(err) {
+			if (err) {
+				return callback(err);
+			}
+			if (typeof onCallback === 'function') {
+				return onCallback(callback);
+			}
+			callback();
+		});
+	}, done);
+};
+
+// the real add function is private
+function walletAdd(wallet, mysql, receiptHashId, userId, price, pays, callback) {
+	var done = silencer(callback);
+
 	var paid = pays.paid;
 	var free = pays.free;
 	var value = paid + free;
-	
+
 	if (typeof value !== 'number' || value <= 0) {
-		return cb(new Error('invalid value to add given:' + value + ':' + (typeof value)));
+		return done(new Error('invalid value to add given:' + value + ':' + (typeof value)));
 	}
-	
-	var name = this._name;
+
+	var name = wallet._name;
+
+	addToBalance(mysql, userId, name, paid, free, function (error) {
+		if (error) {
+			return done(error);
+		}
+
+		var updatePaidHistory = function (next) {
+			if (!paid) {
+				return next();
+			}
+			updateBalanceHistoryIn(mysql, receiptHashId, userId, name, price, paid, 'paid', function (error) {
+				if (error) {
+					return next(error);
+				}
+				log.info('balance added as [paid] added amount to [' + name + ']:', paid, '(user: ' + userId + ')');
+				next();
+			});
+		};
+
+		var updateFreeHistory = function (next) {
+			if (!free) {
+				return next();
+			}
+			updateBalanceHistoryIn(mysql, receiptHashId, userId, name, price, free, 'free', function (error) {
+				if (error) {
+					return next(error);
+				}
+				log.info('balance added as [free] added amount to [' + name + ']:', free, '(user: ' + userId + ')');
+				next();
+			});
+		};
+
+		async.series([
+			updatePaidHistory,
+			updateFreeHistory
+		], done);
+	});
+}
+
+function WalletBatch(wallet, mysql, cb) {
+	this.wallet = wallet;
+	this.mysql = mysql;
+	this.cb = cb;
+}
+
+/**
+ * Batches several add/spend in a single transaction, eg.
+ *
+ * wallet.batch(function(batch, done) {
+ *   batch.add("receipt", "user", 200, { free: 10, paid: 20 }, function() {
+ *     batch.spend("user", 5, "something", done);
+ *   });
+ * }
+ *
+ * @param workCb
+ * @param cb
+ */
+Wallet.prototype.batch = function(workCb, cb) {
+	var done = silencer(cb);
+	var that = this;
 
 	mysqlDb.transaction(function (mysql, callback) {
+		var batchManager = new WalletBatch(that, mysql, callback);
+		workCb(batchManager, callback);
+	}, done);
+};
 
-		addToBalance(mysql, userId, name, paid, free, function (error) {
-			if (error) {
-				return callback(error);
-			}
+// map existing functions from the wallet
+WalletBatch.prototype.addFree = function (receiptHashId, userId, value, cb) {
+	this.add(receiptHashId, userId, 0, { paid: 0, free: value }, cb);
+};
 
-			var updatePaidHistory = function (next) {
-				if (!paid) {
-					return next();
-				}
-				updateBalanceHistoryIn(mysql, receiptHashId, userId, name, price, paid, 'paid', function (error) {
-					if (error) {
-						return next(error);
-					}
-					log.info('balance added as [paid] added amount to [' + name + ']:', paid, '(user: ' + userId + ')');					
-					next();	
-				});
-			};
-			
-			var updateFreeHistory = function (next) {
-				if (!free) {
-					return next();
-				}
-				updateBalanceHistoryIn(mysql, receiptHashId, userId, name, price, free, 'free', function (error) {
-					if (error) {
-						return next(error);
-					}
-					log.info('balance added as [free] added amount to [' + name + ']:', free, '(user: ' + userId + ')');					
-					next();	
-				});
-			};
+WalletBatch.prototype.addPaid = function (receiptHashId, userId, value, price, cb) {
+	this.add(receiptHashId, userId, price, { paid: value, free: 0 }, cb);
+};
 
-			var done = function (error) {
-				if (error) {
-					return callback(error);
-				}
-				
-				if (typeof onCallback === 'function') {
-					return onCallback(function (error) {
-						if (error) {
-							return callback(error);
-						}
-						callback();
-					});
-				}
-				callback();
-			};
+WalletBatch.prototype.add = function (receiptHashId, userId, price, pays, cb) {
+	var that = this;
 
-			async.series([
-				updatePaidHistory,
-				updateFreeHistory
-			], done);
-		});		
-
-	},
-	function (error) {
+	walletAdd(this.wallet, this.mysql, receiptHashId, userId, price, pays, function(error) {
 		if (error) {
-			return cb(error);
+			return that.cb(error);
 		}
 		cb();
 	});
+};
 
+WalletBatch.prototype.spend = function (userId, valueToSpend, spendFor, cb) {
+	var that = this;
+
+	walletSpend(this.wallet, this.mysql, userId, valueToSpend, spendFor, function(error) {
+		if (error) {
+			return that.cb(error);
+		}
+		cb();
+	});
 };
 
 function getBalanceByUserId(that, db, userId, cb) {
@@ -250,11 +294,11 @@ function spendFromBalance(db, userId, name, paid, free, cb) {
 		if (error) {
 			return cb(error);
 		}
-	
+
 		if (!res || !res.affectedRows) {
 			return cb(new Error('updateBalance failed'));
 		}
-		
+
 		cb();
 	});
 }
@@ -279,11 +323,11 @@ function addToBalance(db, userId, name, paid, free, cb) {
 		if (error) {
 			return cb(error);
 		}
-		
+
 		if (!res || !res.affectedRows) {
 			return cb(new Error('addToBalance failed'));
 		}
-		
+
 		cb();
 	});
 }
@@ -302,11 +346,11 @@ function updateBalanceHistoryIn(db, receiptHashId, userId, name, price, value, v
 		if (error) {
 			return cb(error);
 		}
-		
+
 		if (!res || !res.affectedRows) {
 			return cb(new Error('updateBalanceHistoryIn failed'));
 		}
-		
+
 		cb();
 	});
 }
@@ -325,7 +369,7 @@ function updateBalanceHistoryOut(db, userId, name, paid, free, spendFor, cb) {
 		if (error) {
 			return cb(error);
 		}
-		
+
 		if (!res || !res.affectedRows) {
 			return cb(new Error('updateBalanceHistoryOut failed'));
 		}
@@ -351,5 +395,15 @@ function calcSpendValues(toSpend, paidBalance, freeBalance) {
 		freeBalance: freeBalance,
 		toSpendPaid: toSpendPaid,
 		toSpendFree: toSpendFree
+	};
+}
+
+/**
+ * Takes the given callback and silence any extra argument beside the first one
+ * @param cb
+ */
+function silencer(cb) {
+	return function(arg) {
+		cb(arg);
 	};
 }

@@ -214,3 +214,31 @@ hc.spend(userId, cost, itemIdToBePurchase,
 
 ```
 
+> **batch**
+<pre>
+void batch(Function workCb, Function onFinished)
+</pre>
+> Batches several add/spend calls in the same transaction
+>> "workCb" takes a `function(Batch batch, Function callback)`
+>>
+>> "onFinished" is a function that takes an error
+>>
+>> batch has the same add/addFree/addPaid/spend methods as the
+>> normal wallet object with onCallback removed, also errors coming
+>> from the wallet itself are catched early and sent to the onFinished
+>> callback when they happen
+
+Exemple:
+```javascript
+var hc = gracenode.wallet.create('hc');
+
+hc.batch(function(batch, callback) {
+	async.series([
+		batch.addPaid.bind(batch, "receipt", "userId", 200, 10),
+		batch.spend.bind(batch, "usedId", 15, "something"),
+		doSomeOtherMySQLCalls.bind(null, "something")
+	], callback);
+}, function(error) {
+	// do things with error, at this point the transaction is closed
+});
+```
