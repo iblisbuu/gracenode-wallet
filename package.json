@@ -1,7 +1,7 @@
 {
 	"name": "gracenode-wallet",
 	"description": "Coin management module for gracemode framework.",
-	"version": "0.1.2",
+	"version": "0.1.3",
 	"author": "Nobuyori Takahashi <voltrue2@yahoo.com>",
 	"repository": {
 		"type": "git",
